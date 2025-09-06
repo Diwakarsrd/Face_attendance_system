@@ -31,4 +31,4 @@ Edit `email_alert.py` to configure your email credentials.
 > Make sure to allow "less secure apps" or use an app password for Gmail.
 
 ## Author
-Your Name
+Diwakar S

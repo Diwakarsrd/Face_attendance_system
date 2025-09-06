@@ -1,4 +1,13 @@
+# Python cache
 __pycache__/
-faces/
-attendance/
 *.pyc
+
+# Env file (keep secrets safe)
+.env
+
+# Attendance logs
+attendance/
+
+# Face images and trained models
+faces/
+models/

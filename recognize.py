@@ -1,36 +1,72 @@
+# recognize.py
 import cv2
-import face_recognition
-from utils import encode_faces, mark_attendance
+import time
+import threading
+from utils import load_recognizer, detect_faces, mark_attendance
 from email_alert import send_alert
 
-def recognize_faces():
-    known_encodings, known_names = encode_faces()
-    cap = cv2.VideoCapture(0)
+UNKNOWN_EMAIL_COOLDOWN = 60  # seconds between alert emails for unknown faces
 
+_last_unknown_alert = 0
+
+def _send_alert_thread():
+    try:
+        send_alert()
+    except Exception as e:
+        print("Alert send failed:", e)
+
+def recognize_faces(confidence_threshold=70):
+    """
+    Runs webcam, recognizes faces using LBPH recognizer.
+    confidence_threshold: lower means stricter match (LBPH returns smaller = better).
+    """
+    recognizer, label_map = load_recognizer()
+    if recognizer is None:
+        print("[WARN] No trained model found. Register faces first (option 1).")
+        return
+
+    cap = cv2.VideoCapture(0)
+    if not cap.isOpened():
+        print("Cannot open webcam.")
+        return
+
+    print("[INFO] Starting recognition. Press ESC to exit.")
     while True:
         ret, frame = cap.read()
-        small = cv2.resize(frame, (0, 0), fx=0.25, fy=0.25)
-        rgb = small[:, :, ::-1]
+        if not ret:
+            continue
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        faces = detect_faces(gray)
 
-        locations = face_recognition.face_locations(rgb)
-        encodings = face_recognition.face_encodings(rgb, locations)
+        for (x, y, w, h) in faces:
+            face_img = gray[y:y+h, x:x+w]
+            try:
+                face_resized = cv2.resize(face_img, (200, 200))
+            except Exception:
+                continue
 
-        for enc, loc in zip(encodings, locations):
-            matches = face_recognition.compare_faces(known_encodings, enc)
+            label, conf = recognizer.predict(face_resized)  # conf: lower = better
             name = "Unknown"
-            if True in matches:
-                idx = matches.index(True)
-                name = known_names[idx]
+            if conf <= confidence_threshold:
+                name = label_map.get(label, "Unknown")
                 mark_attendance(name)
+                color = (0, 200, 0)
+                text = f"{name} ({conf:.1f})"
             else:
-                send_alert()
+                color = (0, 0, 255)
+                text = f"Unknown ({conf:.1f})"
+                # send email alert but restrict to cooldown
+                global _last_unknown_alert
+                now = time.time()
+                if now - _last_unknown_alert > UNKNOWN_EMAIL_COOLDOWN:
+                    _last_unknown_alert = now
+                    threading.Thread(target=_send_alert_thread, daemon=True).start()
 
-            y1, x2, y2, x1 = [v * 4 for v in loc]
-            cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-            cv2.putText(frame, name, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 255, 0), 2)
+            cv2.rectangle(frame, (x, y), (x+w, y+h), color, 2)
+            cv2.putText(frame, text, (x, y-10), cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
 
-        cv2.imshow("Face Recognition", frame)
-        if cv2.waitKey(1) == 27:
+        cv2.imshow("Attendance - Press ESC to quit", frame)
+        if cv2.waitKey(1) & 0xFF == 27:
             break
 
     cap.release()
